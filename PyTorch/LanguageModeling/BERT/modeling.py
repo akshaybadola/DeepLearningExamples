@@ -67,7 +67,7 @@ def load_tf_weights_in_bert(model, tf_checkpoint_path):
         import tensorflow as tf
     except ImportError:
         print("Loading a TensorFlow models in PyTorch, requires TensorFlow to be installed. Please see "
-            "https://www.tensorflow.org/install/ for installation instructions.")
+              "https://www.tensorflow.org/install/ for installation instructions.")
         raise
     tf_path = os.path.abspath(tf_checkpoint_path)
     print("Converting TensorFlow checkpoint from {}".format(tf_path))
@@ -118,14 +118,18 @@ def load_tf_weights_in_bert(model, tf_checkpoint_path):
         pointer.data = torch.from_numpy(array)
     return model
 
+
 def gelu(x):
     return torch.nn.functional.gelu(x, approximate=True)
+
 
 def swish(x):
     return x * torch.sigmoid(x)
 
-#torch.nn.functional.gelu(x) # Breaks ONNX export
+
+# torch.nn.functional.gelu(x) # Breaks ONNX export
 ACT2FN = {"gelu": gelu, "tanh": torch.tanh,  "relu": torch.nn.functional.relu, "swish": swish}
+
 
 class LinearActivation(Module):
     r"""Fused Linear and activation Module.
@@ -154,9 +158,9 @@ class LinearActivation(Module):
             init.uniform_(self.bias, -bound, bound)
 
     def forward(self, input):
-        #if not self.bias is None:
-        #    return self.biased_act_fn(self.bias, F.linear(input, self.weight, None))
-        #else:
+        # if not self.bias is None:
+        #     return self.biased_act_fn(self.bias, F.linear(input, self.weight, None))
+        # else:
         return self.act_fn(F.linear(input, self.weight, self.bias))
 
     def extra_repr(self):
@@ -260,18 +264,20 @@ class BertConfig(object):
         with open(json_file_path, "w", encoding='utf-8') as writer:
             writer.write(self.to_json_string())
 
+
 class BertEmbeddings(nn.Module):
     """Construct the embeddings from word, position and token_type embeddings.
     """
-    distillation : Final[bool]
+    distillation: Final[bool]
+
     def __init__(self, config):
         super(BertEmbeddings, self).__init__()
         self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size)
         self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
         self.token_type_embeddings = nn.Embedding(config.type_vocab_size, config.hidden_size)
 
-        # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
-        # any TensorFlow checkpoint file
+        # self.LayerNorm is not snake-cased to stick with TensorFlow model
+        # variable name and be able to load any TensorFlow checkpoint file
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=1e-12)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
@@ -279,8 +285,8 @@ class BertEmbeddings(nn.Module):
         if self.distillation:
             self.distill_state_dict = OrderedDict()
             self.distill_config = config.distillation_config
-        else :
-            self.distill_config = {'use_embedding_states' : False }
+        else:
+            self.distill_config = {'use_embedding_states': False}
 
     def forward(self, input_ids, token_type_ids):
         seq_length = input_ids.size(1)
@@ -302,7 +308,8 @@ class BertEmbeddings(nn.Module):
 
 
 class BertSelfAttention(nn.Module):
-    distillation : Final[bool]
+    distillation: Final[bool]
+
     def __init__(self, config):
         super(BertSelfAttention, self).__init__()
         if config.hidden_size % config.num_attention_heads != 0:
@@ -319,22 +326,24 @@ class BertSelfAttention(nn.Module):
 
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
 
-        #Distillation specific
+        # Distillation specific
         self.distillation = getattr(config, 'distillation', False)
         if self.distillation:
             self.distill_state_dict = OrderedDict()
             self.distill_config = config.distillation_config
-        else :
-            self.distill_config = { 'use_attention_scores' : False, 'use_value_states' : False }
+        else:
+            self.distill_config = {'use_attention_scores': False, 'use_value_states': False}
 
     def transpose_for_scores(self, x):
         # seq: x.size(0), bsz: x.size(0)
-        x = x.view(x.size(0), x.size(1) * self.num_attention_heads, self.attention_head_size).transpose(0, 1)
+        x = x.view(x.size(0), x.size(1) * self.num_attention_heads,
+                   self.attention_head_size).transpose(0, 1)
         return x
 
     def transpose_key_for_scores(self, x):
         # seq: x.size(0), bsz: x.size(0)
-        x = x.view(x.size(0), x.size(1) * self.num_attention_heads, self.attention_head_size).permute(1, 2, 0)
+        x = x.view(x.size(0), x.size(1) * self.num_attention_heads,
+                   self.attention_head_size).permute(1, 2, 0)
         return x
 
     def forward(self, hidden_states, attention_mask):
@@ -375,7 +384,7 @@ class BertSelfAttention(nn.Module):
         # (seq, bsz, hidden)
         context_layer = context_layer.view(seq_length, batch_size, self.all_head_size)
 
-        #Cache states if running distillation
+        # Cache states if running distillation
         if self.distillation:
             if self.distill_config["use_attention_scores"]:
                 self.distill_state_dict["attention_scores"] = attention_scores
@@ -413,7 +422,8 @@ class BertAttention(nn.Module):
 class BertIntermediate(nn.Module):
     def __init__(self, config):
         super(BertIntermediate, self).__init__()
-        self.dense_act = LinearActivation(config.hidden_size, config.intermediate_size, act=config.hidden_act)
+        self.dense_act = LinearActivation(config.hidden_size,
+                                          config.intermediate_size, act=config.hidden_act)
 
     def forward(self, hidden_states):
         hidden_states = self.dense_act(hidden_states)
@@ -435,31 +445,33 @@ class BertOutput(nn.Module):
 
 
 class BertLayer(nn.Module):
-    distillation : Final[bool]
+    distillation: Final[bool]
+
     def __init__(self, config):
         super(BertLayer, self).__init__()
         self.attention = BertAttention(config)
         self.intermediate = BertIntermediate(config)
         self.output = BertOutput(config)
 
-        #Distillation specific
+        # Distillation specific
         self.distillation = getattr(config, 'distillation', False)
         if self.distillation:
             self.distill_state_dict = OrderedDict()
             self.distill_config = config.distillation_config
-        else :
-            self.distill_config = {'use_hidden_states' : False}
+        else:
+            self.distill_config = {'use_hidden_states': False}
 
     def forward(self, hidden_states, attention_mask):
         attention_output = self.attention(hidden_states, attention_mask)
         intermediate_output = self.intermediate(attention_output)
         layer_output = self.output(intermediate_output, attention_output)
 
-        #Cache states if running distillation
+        # Cache states if running distillation
         if self.distillation:
             if self.distill_config["use_hidden_states"]:
                 self.distill_state_dict["hidden_states"] = layer_output
         return layer_output
+
 
 class BertEncoder(nn.Module):
     def __init__(self, config):
@@ -483,7 +495,8 @@ class BertEncoder(nn.Module):
         num_layers = len(self.layer)
         chunk_length = math.ceil(math.sqrt(num_layers))
         while l < num_layers:
-            hidden_states = checkpoint.checkpoint(custom(l, l+chunk_length), hidden_states, attention_mask*1)
+            hidden_states = checkpoint.checkpoint(custom(l, l+chunk_length),
+                                                  hidden_states, attention_mask*1)
             l += chunk_length
 
         return hidden_states
@@ -510,6 +523,7 @@ class BertEncoder(nn.Module):
             all_encoder_layers.append(hidden_states)
         return all_encoder_layers
 
+
 class BertPooler(nn.Module):
     def __init__(self, config):
         super(BertPooler, self).__init__()
@@ -526,7 +540,8 @@ class BertPooler(nn.Module):
 class BertPredictionHeadTransform(nn.Module):
     def __init__(self, config):
         super(BertPredictionHeadTransform, self).__init__()
-        self.dense_act = LinearActivation(config.hidden_size, config.hidden_size, act=config.hidden_act)
+        self.dense_act = LinearActivation(config.hidden_size, config.hidden_size,
+                                          act=config.hidden_act)
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=1e-12)
 
     def forward(self, hidden_states):
@@ -587,7 +602,9 @@ class BertPreTrainingHeads(nn.Module):
     def forward(self, sequence_output, pooled_output, masked_lm_labels):
         if self.sequence_output_is_dense:
             # We are masking out elements that won't contribute to loss because of masked lm labels
-            sequence_flattened = torch.index_select(sequence_output.view(-1,sequence_output.shape[-1]), 0, torch.nonzero(masked_lm_labels.view(-1) != -1).squeeze())
+            sequence_flattened = torch.index_select(
+                sequence_output.view(-1, sequence_output.shape[-1]),
+                0, torch.nonzero(masked_lm_labels.view(-1) != -1).squeeze())
             prediction_scores = self.predictions(sequence_flattened)
         else:
             prediction_scores = self.predictions(sequence_output)
@@ -627,21 +644,23 @@ class BertPreTrainedModel(nn.Module):
     def checkpoint_activations(self, val):
         def _apply_flag(module):
             if hasattr(module, "_checkpoint_activations"):
-                module._checkpoint_activations=val
+                module._checkpoint_activations = val
         self.apply(_apply_flag)
+
     def enable_apex(self, val):
         def _apply_flag(module):
             if hasattr(module, "apex_enabled"):
-                module.apex_enabled=val
+                module.apex_enabled = val
         self.apply(_apply_flag)
 
     @classmethod
-    def from_scratch(cls, pretrained_model_name_or_path, distill_config=None, pooler=True, *inputs, **kwargs):
+    def from_scratch(cls, pretrained_model_name_or_path, distill_config=None,
+                     pooler=True, *inputs, **kwargs):
         resolved_config_file = os.path.join(
             pretrained_model_name_or_path, CONFIG_NAME)
         config = BertConfig.from_json_file(resolved_config_file)
 
-        #Load distillation specific config
+        # Load distillation specific config
         if distill_config:
             distill_config = json.load(open(distill_config, "r"))
             distill_config["distillation_config"]["use_pooler"] = pooler
@@ -715,7 +734,7 @@ class BertPreTrainedModel(nn.Module):
         # Load config
         config_file = os.path.join(serialization_dir, CONFIG_NAME)
         config = BertConfig.from_json_file(config_file)
-        #Load distillation specific config
+        # Load distillation specific config
         if distill_config:
             distill_config = json.load(open(distill_config, "r"))
             distill_config["distillation_config"]["use_pooler"] = pooler
@@ -828,8 +847,9 @@ class BertModel(BertPreTrainedModel):
     all_encoder_layers, pooled_output = model(input_ids, token_type_ids, input_mask)
     ```
     """
-    distillation : Final[bool]
-    teacher : Final[bool]
+    distillation: Final[bool]
+    teacher: Final[bool]
+
     def __init__(self, config):
         super(BertModel, self).__init__(config)
         # Distillation specific
@@ -837,8 +857,8 @@ class BertModel(BertPreTrainedModel):
         if self.distillation:
             self.distill_state_dict = OrderedDict()
             self.distill_config = config.distillation_config
-        else :
-            self.distill_config = {'use_pooler' : False, 'use_pred_states' : False}
+        else:
+            self.distill_config = {'use_pooler': False, 'use_pred_states': False}
 
         self.embeddings = BertEmbeddings(config)
         self.encoder = BertEncoder(config)
@@ -868,7 +888,7 @@ class BertModel(BertPreTrainedModel):
         # positions we want to attend and -10000.0 for masked positions.
         # Since we are adding it to the raw scores before the softmax, this is
         # effectively the same as removing these entirely.
-        extended_attention_mask = extended_attention_mask.to(dtype=self.embeddings.word_embeddings.weight.dtype) # fp16 compatibility
+        extended_attention_mask = extended_attention_mask.to(dtype=self.embeddings.word_embeddings.weight.dtype)  # fp16 compatibility
         extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
 
         embedding_output = self.embeddings(input_ids, token_type_ids)
@@ -886,6 +906,7 @@ class BertModel(BertPreTrainedModel):
 
     def make_teacher(self, ):
         self.teacher = True
+
 
 class BertForPreTraining(BertPreTrainedModel):
     """BERT model with pre-training heads.
@@ -937,14 +958,15 @@ class BertForPreTraining(BertPreTrainedModel):
     masked_lm_logits_scores, seq_relationship_logits = model(input_ids, token_type_ids, input_mask)
     ```
     """
-    distillation : Final[bool]
+    distillation: Final[bool]
 
     def __init__(self, config, sequence_output_is_dense=False):
         super(BertForPreTraining, self).__init__(config)
         self.bert = BertModel(config)
         self.distillation = getattr(config, 'distillation', False)
         if not self.distillation:
-            self.cls = BertPreTrainingHeads(config, self.bert.embeddings.word_embeddings.weight, sequence_output_is_dense)
+            self.cls = BertPreTrainingHeads(config, self.bert.embeddings.word_embeddings.weight,
+                                            sequence_output_is_dense)
         self.apply(self.init_bert_weights)
 
     def forward(self, input_ids, token_type_ids, attention_mask, masked_lm_labels):
@@ -954,7 +976,8 @@ class BertForPreTraining(BertPreTrainedModel):
         encoded_layers, pooled_output = self.bert(input_ids, token_type_ids, attention_mask)
         if not self.distillation:
             sequence_output = encoded_layers[-1]
-            prediction_scores, seq_relationship_score = self.cls(sequence_output, pooled_output, masked_lm_labels)
+            prediction_scores, seq_relationship_score = self.cls(sequence_output, pooled_output,
+                                                                 masked_lm_labels)
             return prediction_scores, seq_relationship_score
 
 
@@ -1013,7 +1036,8 @@ class BertForMaskedLM(BertPreTrainedModel):
 
         if masked_lm_labels is not None:
             loss_fct = CrossEntropyLoss(ignore_index=-1)
-            masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), masked_lm_labels.view(-1))
+            masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size),
+                                      masked_lm_labels.view(-1))
             return masked_lm_loss
         else:
             return prediction_scores
@@ -1070,11 +1094,12 @@ class BertForNextSentencePrediction(BertPreTrainedModel):
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, next_sentence_label=None):
         _, pooled_output = self.bert(input_ids, token_type_ids, attention_mask)
-        seq_relationship_score = self.cls( pooled_output)
+        seq_relationship_score = self.cls(pooled_output)
 
         if next_sentence_label is not None:
             loss_fct = CrossEntropyLoss(ignore_index=-1)
-            next_sentence_loss = loss_fct(seq_relationship_score.view(-1, 2), next_sentence_label.view(-1))
+            next_sentence_loss = loss_fct(seq_relationship_score.view(-1, 2),
+                                          next_sentence_label.view(-1))
             return next_sentence_loss
         else:
             return seq_relationship_score
@@ -1125,11 +1150,12 @@ class BertForSequenceClassification(BertPreTrainedModel):
     logits = model(input_ids, token_type_ids, input_mask)
     ```
     """
-    distillation : Final[bool]
+    distillation: Final[bool]
+
     def __init__(self, config, num_labels):
         super(BertForSequenceClassification, self).__init__(config)
 
-        #Distillation specific
+        # Distillation specific
         self.distillation = getattr(config, 'distillation', False)
         if self.distillation:
             self.distill_state_dict = OrderedDict()
@@ -1146,7 +1172,7 @@ class BertForSequenceClassification(BertPreTrainedModel):
         _, pooled_output = self.bert(input_ids, token_type_ids, attention_mask)
         if not self.distillation or self.distill_config["use_pred_states"]:
             pooled_output = self.dropout(pooled_output)
-            #pooled_output = torch.relu(pooled_output)
+            # pooled_output = torch.relu(pooled_output)
             final_output = self.classifier(pooled_output)
             if self.distillation:
                 if self.distill_config["use_pred_states"]:
@@ -1336,20 +1362,23 @@ class BertForQuestionAnswering(BertPreTrainedModel):
     start_logits, end_logits = model(input_ids, token_type_ids, input_mask)
     ```
     """
-    distillation : Final[bool]
+    distillation: Final[bool]
+
     def __init__(self, config):
         super(BertForQuestionAnswering, self).__init__(config)
 
-        #Distillation specific
+        # Distillation specific
         self.distillation = getattr(config, 'distillation', False)
         if self.distillation:
             self.distill_state_dict = OrderedDict()
             self.distill_config = config.distillation_config
-        else :
-            self.distill_config = {'use_pred_states' : False }
+        else:
+            self.distill_config = {'use_pred_states': False}
 
         self.bert = BertModel(config)
-        # TODO check with Google if it's normal there is no dropout on the token classifier of SQuAD in the TF version
+        # TODO check with Google if it's normal there is no dropout on the token classifier of SQuAD
+        # in the TF version
+
         # self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
         if not self.distillation or self.distill_config["use_pred_states"]:
@@ -1369,6 +1398,7 @@ class BertForQuestionAnswering(BertPreTrainedModel):
                     self.distill_state_dict["pred_states"] = [start_logits, end_logits]
             if not self.distillation or not self.training:
                 return start_logits, end_logits
+
 
 class Project(Module):
 

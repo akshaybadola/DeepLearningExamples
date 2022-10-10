@@ -72,6 +72,9 @@ def signal_handler(sig, frame):
 signal.signal(signal.SIGTERM, signal_handler)
 
 
+HookType = Callable[[Any, dist.GradBucket], torch.futures.Future[torch.Tensor]]
+
+
 class BertPretrainingCriterion(torch.nn.Module):
 
     sequence_output_is_dense: Final[bool]
@@ -95,45 +98,45 @@ class BertPretrainingCriterion(torch.nn.Module):
         return total_loss
 
 
-class SyncFreeStats :
-    def __init__(self) :
+class SyncFreeStats:
+    def __init__(self):
         self.host_stats = {}
         self.device_stats = {}
         self.device_funcs = {}
 
-    def add_stat(self, name, dtype=torch.int32, device_tensor=None, device_func=None) :
-        if device_tensor is not None :
+    def add_stat(self, name, dtype=torch.int32, device_tensor=None, device_func=None):
+        if device_tensor is not None:
             assert dtype == device_tensor.dtype, "Error: dtype do not match: {} {}".format(dtype, device_tensor.dtype)
         self.host_stats[name] = torch.zeros(1, dtype=dtype).pin_memory()
         self.device_stats[name] = device_tensor
         self.device_funcs[name] = device_func
 
-    def copy_from_device(self) :
-        for name in self.host_stats.keys() :
+    def copy_from_device(self):
+        for name in self.host_stats.keys():
             # Apply device function to device stat
             if self.device_stats[name] is not None and self.device_funcs[name] is not None:
                 self.host_stats[name].copy_(self.device_funcs[name](self.device_stats[name]), non_blocking=True)
-            elif self.device_stats[name] is not None :
+            elif self.device_stats[name] is not None:
                 self.host_stats[name].copy_(self.device_stats[name], non_blocking=True)
-            elif self.device_funcs[name] is not None :
+            elif self.device_funcs[name] is not None:
                 self.host_stats[name].copy_(self.device_funcs[name](), non_blocking=True)
 
-    def host_stat(self, name) :
+    def host_stat(self, name):
         assert name in self.host_stats
         return self.host_stats[name]
 
-    def host_stat_value(self, name) :
+    def host_stat_value(self, name):
         assert name in self.host_stats
         return self.host_stats[name].item()
 
-    def update_host_stat(self, name, tensor) :
+    def update_host_stat(self, name, tensor):
         self.host_stats[name] = tensor
 
-    def device_stat(self, name) :
+    def device_stat(self, name):
         assert self.device_stats[name] is not None
         return self.device_stats[name]
 
-    def update_device_stat(self, name, tensor) :
+    def update_device_stat(self, name, tensor):
         self.device_stats[name] = tensor
 
 
@@ -320,6 +323,7 @@ def parse_arguments():
 
     return args
 
+
 def setup_training(args):
 
     assert (torch.cuda.is_available())
@@ -333,7 +337,7 @@ def setup_training(args):
         torch.cuda.set_device(args.local_rank)
         device = torch.device("cuda", args.local_rank)
         # Initializes the distributed backend which will take care of synchronizing nodes/GPUs
-        if args.cuda_graphs :
+        if args.cuda_graphs:
             os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "0"
         torch.distributed.init_process_group(backend='nccl', init_method='env://')
         args.n_gpu = 1
@@ -373,6 +377,7 @@ def setup_training(args):
         os.makedirs(args.output_dir, exist_ok=True)
 
     return device, args
+
 
 def prepare_model_and_optimizer(args, device, sequence_output_is_dense):
 
@@ -416,7 +421,7 @@ def prepare_model_and_optimizer(args, device, sequence_output_is_dense):
     if args.fp16 and args.allreduce_post_accumulation_fp16:
         model.half()
 
-    if not args.disable_jit_fusions :
+    if not args.disable_jit_fusions:
         model = torch.jit.script(model)
 
     param_optimizer = list(model.named_parameters())
@@ -439,11 +444,11 @@ def prepare_model_and_optimizer(args, device, sequence_output_is_dense):
 
     if args.resume_from_checkpoint:
         # For phase2 from scratch, need to reset the learning rate and step count in the checkpoint. Else restore values in checkpoint.
-        if (args.phase2 and not args.resume_phase2) or args.init_checkpoint :
-            for group in checkpoint['optimizer']['param_groups'] :
+        if (args.phase2 and not args.resume_phase2) or args.init_checkpoint:
+            for group in checkpoint['optimizer']['param_groups']:
                 group['step'].zero_()
                 group['lr'].fill_(args.learning_rate)
-        else :
+        else:
             if 'grad_scaler' in checkpoint and (not args.phase2 or args.resume_phase2):
                 grad_scaler.load_state_dict(checkpoint['grad_scaler'])
         optimizer.load_state_dict(checkpoint['optimizer'])  # , strict=False)
@@ -453,13 +458,14 @@ def prepare_model_and_optimizer(args, device, sequence_output_is_dense):
         # It is important to synchronize the streams after the DDP initialization
         # so anything after sees properly initialized model weights across GPUs
         side_stream = torch.cuda.Stream()
-        with torch.cuda.stream(side_stream) :
-            model = DDP(model, device_ids=[args.local_rank], output_device=args.local_rank, bucket_cap_mb=torch.cuda.get_device_properties(device).total_memory, gradient_as_bucket_view=True)
+        with torch.cuda.stream(side_stream):
+            model = DDP(model, device_ids=[args.local_rank], output_device=args.local_rank,
+                        bucket_cap_mb=torch.cuda.get_device_properties(device).total_memory,
+                        gradient_as_bucket_view=True)
         torch.cuda.current_stream().wait_stream(side_stream)
 
         from torch.distributed.algorithms.ddp_comm_hooks.default_hooks import allreduce_hook
-        def scale_by_grad_accum_steps_wrapper(hook: Callable[[Any, dist.GradBucket], torch.futures.Future[torch.Tensor]]) -> Callable[[Any, dist.GradBucket], torch.futures.Future[torch.Tensor]]:
-
+        def scale_by_grad_accum_steps_wrapper(hook: HookType) -> HookType:
             def scale_by_grad_accum_steps_wrapper_hook(
                 hook_state, bucket: dist.GradBucket
             ) -> torch.futures.Future[torch.Tensor]:
@@ -486,7 +492,7 @@ def prepare_model_and_optimizer(args, device, sequence_output_is_dense):
     return model, optimizer, grad_scaler, lr_scheduler, checkpoint, global_step, criterion, start_epoch
 
 
-def checkpoint_step(args, epoch, global_step, model, optimizer, grad_scaler, last3_checkpoint_paths) :
+def checkpoint_step(args, epoch, global_step, model, optimizer, grad_scaler, last3_checkpoint_paths):
     torch.cuda.synchronize()
     if is_main_process() and not args.skip_checkpoint:
         # Save a trained model
@@ -516,7 +522,7 @@ def checkpoint_step(args, epoch, global_step, model, optimizer, grad_scaler, las
 
 
 def take_training_step(args, grad_scaler, model, criterion, batch, stats):
-    with torch.cuda.amp.autocast(enabled=(args.fp16 and not args.allreduce_post_accumulation_fp16)) :
+    with torch.cuda.amp.autocast(enabled=(args.fp16 and not args.allreduce_post_accumulation_fp16)):
         prediction_scores, seq_relationship_score = model(input_ids=batch['input_ids'], token_type_ids=batch['token_type_ids'], attention_mask=batch['attention_mask'], masked_lm_labels=batch['labels'])
         loss = criterion(prediction_scores, seq_relationship_score, batch['labels'], batch['next_sentence_labels'])
 
